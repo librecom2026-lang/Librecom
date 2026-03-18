@@ -290,7 +290,7 @@ export default function COCerca() {
   if (showPresMode) return (
     <div style={{ ...S.page, justifyContent:"center", padding:24, background:"#050810" }}>
       <style>{`@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}} .fu{animation:fadeUp 0.5s ease}`}</style>
-      <div className="fu" style={{ width:"100%", maxWidth:"92%", textAlign:"center" }}>
+      <div className="fu" style={{ width:"100%", maxWidth:"92%",margin:"0 auto"     textAlign:"center" }}>
         <div style={{ fontSize:9,letterSpacing:4,color:"#4ecda4",marginBottom:20,opacity:0.6 }}>MOSTRÁ ESTA PANTALLA</div>
 
         {myProfile?.presType==="video" ? (
