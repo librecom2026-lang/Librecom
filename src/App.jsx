@@ -169,7 +169,7 @@ export default function COCerca() {
         <div style={{ fontSize:9,letterSpacing:5,color:"#4ecda4",opacity:0.7,marginBottom:6 }}>RED CO — CÓDIGO ORIGEN</div>
         <div style={{ fontSize:24,fontWeight:900,letterSpacing:3,color:"#7fffd4" }}>BIENVENIDO/A<br/>A CO·CERCA</div>
       </div>
-      <div className="fu" style={{ animationDelay:"0.3s", opacity:0, width:"100%", maxWidth:340 }}>
+      <div className="fu" style={{ animationDelay:"0.3s", opacity:0, width:"100%", maxWidth:"92%" }}>
         <div style={{ ...S.card, marginBottom:20, textAlign:"left" }}>
           <div style={{ fontSize:13,color:"#7fffd4",lineHeight:1.8,fontFamily:"sans-serif",fontWeight:300,textAlign:"center" }}>
             Muy pronto:<br/>
