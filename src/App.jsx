@@ -21,7 +21,6 @@ const S = {
   label:      { fontSize:10, letterSpacing:3, color:"#4ecda4", marginBottom:8, display:"block" },
 };
 
-// Calcular ángulo entre dos puntos GPS
 function calcAngle(lat1, lng1, lat2, lng2) {
   const dLng = (lng2 - lng1) * Math.PI / 180;
   const lat1R = lat1 * Math.PI / 180;
@@ -31,7 +30,6 @@ function calcAngle(lat1, lng1, lat2, lng2) {
   return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
 }
 
-// Calcular posición XY en el radar
 function getXY(distance, angle) {
   const r = (Math.min(distance, MAX_RADIUS) / MAX_RADIUS) * (RADAR_SIZE / 2 - 28);
   const rad = (angle - 90) * Math.PI / 180;
@@ -48,21 +46,21 @@ export default function COCerca() {
   const [gpsError, setGpsError]     = useState(null);
 
   // Registro
-  const [regStep, setRegStep]       = useState(1);
-  const [regName, setRegName]       = useState("");
-  const [regAge, setRegAge]         = useState("");
-  const [regFrase, setRegFrase]     = useState("");
-  const [regBusca, setRegBusca]     = useState("");
+  const [regStep, setRegStep]         = useState(1);
+  const [regName, setRegName]         = useState("");
+  const [regAge, setRegAge]           = useState("");
+  const [regFrase, setRegFrase]       = useState("");
+  const [regBusca, setRegBusca]       = useState("");
   const [regPresType, setRegPresType] = useState("");
   const [regPhotoURL, setRegPhotoURL] = useState("");
-  const [regMensaje, setRegMensaje] = useState("");
+  const [regMensaje, setRegMensaje]   = useState("");
 
   // Radar
-  const [users, setUsers]           = useState([]);
-  const [maxDist, setMaxDist]       = useState(500);
-  const [visible, setVisible]       = useState(true);
-  const [selected, setSelected]     = useState(null);
-  const [matches, setMatches]       = useState([]);
+  const [users, setUsers]               = useState([]);
+  const [maxDist, setMaxDist]           = useState(500);
+  const [visible, setVisible]           = useState(true);
+  const [selected, setSelected]         = useState(null);
+  const [matches, setMatches]           = useState([]);
   const [showSettings, setShowSettings] = useState(false);
   const [showMatches, setShowMatches]   = useState(false);
   const [showPaywall, setShowPaywall]   = useState(false);
@@ -77,17 +75,15 @@ export default function COCerca() {
   const [chatInput, setChatInput]       = useState("");
   const chatEndRef = useRef(null);
 
-  // Video
-  const [recording, setRecording]     = useState(false);
-  const [videoURL, setVideoURL]       = useState("");
-  const mediaRecorderRef = useRef(null);
-  const videoPreviewRef  = useRef(null);
-  const streamRef        = useRef(null);
+  // Video — GALERÍA en lugar de grabación
+  const [videoURL, setVideoURL] = useState("");
 
   // Misc
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState("");
-  const wsRef = useRef(null);
+  const wsRef       = useRef(null);
+  const pingRef     = useRef(null);
+  const gpsWatchRef = useRef(null);
 
   // ─── SPLASH ─────────────────────────────────
   useEffect(() => {
@@ -104,38 +100,67 @@ export default function COCerca() {
   // ─── GPS ────────────────────────────────────
   const startGPS = useCallback(() => {
     if (!navigator.geolocation) { setGpsError("GPS no disponible"); return; }
-    navigator.geolocation.watchPosition(
-      pos => { setMyLat(pos.coords.latitude); setMyLng(pos.coords.longitude); setGpsError(null); },
-      ()  => setGpsError("No se pudo obtener ubicación"),
-      { enableHighAccuracy:true, maximumAge:10000, timeout:15000 }
+    if (gpsWatchRef.current) navigator.geolocation.clearWatch(gpsWatchRef.current);
+    gpsWatchRef.current = navigator.geolocation.watchPosition(
+      pos => {
+        setMyLat(pos.coords.latitude);
+        setMyLng(pos.coords.longitude);
+        setGpsError(null);
+      },
+      () => setGpsError("No se pudo obtener ubicación"),
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
     );
   }, []);
 
-  // ─── WEBSOCKET ──────────────────────────────
+  // ─── WEBSOCKET con heartbeat ─────────────────
   const connectWS = useCallback((userId) => {
     try {
       if (wsRef.current) wsRef.current.close();
+      if (pingRef.current) clearInterval(pingRef.current);
+
       const ws = new WebSocket(WS_URL);
       wsRef.current = ws;
-      ws.onopen    = () => ws.send(JSON.stringify({ type:"auth", userId }));
-      ws.onmessage = (e) => {
-        const msg = JSON.parse(e.data);
-        if (msg.type === "message") {
-          const time = new Date().toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" });
-          setChatMessages(prev => ({
-            ...prev,
-            [msg.from]: [...(prev[msg.from]||[]), { from:"them", text:msg.text, time }]
-          }));
-        }
-        if (msg.type === "match") {
-          fetchMatches(userId);
-          if (msg.withUser) {
-            setShowMatchAnim(msg.withUser);
-            setTimeout(() => setShowMatchAnim(null), 5000);
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ type: "auth", userId }));
+        // Heartbeat cada 25s para mantener conexión viva
+        pingRef.current = setInterval(() => {
+          if (ws.readyState === 1) {
+            ws.send(JSON.stringify({ type: "ping" }));
+          } else {
+            clearInterval(pingRef.current);
           }
-        }
+        }, 25000);
       };
-      ws.onclose = () => setTimeout(() => connectWS(userId), 3000);
+
+      ws.onmessage = (e) => {
+        try {
+          const msg = JSON.parse(e.data);
+          if (msg.type === "message") {
+            const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+            setChatMessages(prev => ({
+              ...prev,
+              [msg.from]: [...(prev[msg.from] || []), { from: "them", text: msg.text, time }]
+            }));
+          }
+          if (msg.type === "match") {
+            fetchMatches(userId);
+            if (msg.withUser) {
+              setShowMatchAnim(msg.withUser);
+              setTimeout(() => setShowMatchAnim(null), 5000);
+            }
+          }
+          // pong ignorado silenciosamente
+        } catch(e) { /* silencioso */ }
+      };
+
+      ws.onclose = () => {
+        clearInterval(pingRef.current);
+        setTimeout(() => connectWS(userId), 3000);
+      };
+
+      ws.onerror = () => ws.close();
+
     } catch(e) { /* silencioso */ }
   }, []);
 
@@ -159,17 +184,17 @@ export default function COCerca() {
     } catch(e) { /* silencioso */ }
   }, []);
 
-  // ─── UPDATE LOCATION ────────────────────────
+  // ─── UPDATE LOCATION en tiempo real ─────────
   useEffect(() => {
     if (!myId || !myLat || !myLng) return;
     fetch(`${API_URL}/users/${myId}`, {
-      method:"PATCH",
-      headers:{ "Content-Type":"application/json" },
-      body: JSON.stringify({ lat:myLat, lng:myLng, visible })
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lat: myLat, lng: myLng, visible })
     }).catch(() => {});
   }, [myLat, myLng, myId, visible]);
 
-  // ─── RADAR POLLING ──────────────────────────
+  // ─── RADAR POLLING cada 5s ──────────────────
   useEffect(() => {
     if (screen !== "radar" || !myId || !myLat || !myLng) return;
     fetchNearby(myLat, myLng, myId);
@@ -178,28 +203,30 @@ export default function COCerca() {
   }, [screen, myId, myLat, myLng, fetchNearby]);
 
   // ─── SCROLL CHAT ────────────────────────────
-  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior:"smooth" }); }, [chatMessages, activeChat]);
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatMessages, activeChat]);
 
   // ─── REGISTRO ───────────────────────────────
   const handleRegister = async () => {
     setLoading(true); setError("");
     try {
       const res  = await fetch(`${API_URL}/auth/register`, {
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: regName,
-          age:  parseInt(regAge),
-          bio:  regFrase,
+          name:      regName,
+          age:       parseInt(regAge),
+          bio:       regFrase,
           photo_url: regPhotoURL || `https://i.pravatar.cc/150?u=${regName}${Date.now()}`,
-          lat: myLat || 0,
-          lng: myLng || 0,
+          lat:       myLat || 0,
+          lng:       myLng || 0,
         })
       });
       const data = await res.json();
       if (data.id) {
         setMyId(data.id);
-        setMyProfile({ ...data, busca:regBusca, presType:regPresType, mensaje:regMensaje });
+        setMyProfile({ ...data, busca: regBusca, presType: regPresType, mensaje: regMensaje });
         connectWS(data.id);
         fetchMatches(data.id);
         startGPS();
@@ -220,15 +247,15 @@ export default function COCerca() {
     setSelected(null);
     try {
       const res  = await fetch(`${API_URL}/like`, {
-        method:"POST",
-        headers:{ "Content-Type":"application/json" },
-        body: JSON.stringify({ fromUserId:myId, toUserId:user.id })
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fromUserId: myId, toUserId: user.id })
       });
       const data = await res.json();
       if (data.match) {
         setEsperando(prev => prev.filter(id => id !== user.id));
-        setMatches(m => [...m, { otherUser:user }]);
-        setChatMessages(prev => ({ ...prev, [user.id]:[] }));
+        setMatches(m => [...m, { otherUser: user }]);
+        setChatMessages(prev => ({ ...prev, [user.id]: [] }));
         setShowMatchAnim(user);
         setTimeout(() => setShowMatchAnim(null), 5000);
       }
@@ -241,41 +268,30 @@ export default function COCerca() {
   const sendMessage = () => {
     if (!chatInput.trim() || !activeChat || !myId) return;
     const text = chatInput.trim();
-    const time = new Date().toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" });
-    setChatMessages(prev => ({ ...prev, [activeChat.id]:[...(prev[activeChat.id]||[]), { from:"me", text, time }] }));
+    const time = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    setChatMessages(prev => ({
+      ...prev,
+      [activeChat.id]: [...(prev[activeChat.id] || []), { from: "me", text, time }]
+    }));
     setChatInput("");
     if (wsRef.current?.readyState === 1) {
       const match = matches.find(m => m.otherUser?.id === activeChat.id);
-      wsRef.current.send(JSON.stringify({ type:"message", toUserId:activeChat.id, text, matchId:match?.id }));
+      wsRef.current.send(JSON.stringify({
+        type: "message",
+        toUserId: activeChat.id,
+        text,
+        matchId: match?.id
+      }));
     }
   };
 
-  // ─── CÁMARA FOTO ────────────────────────────
+  // ─── FOTO — abre cámara directo en Android ───
   const openCamera = () => document.getElementById("photoInput").click();
 
-  // ─── GRABAR VIDEO ───────────────────────────
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video:{ facingMode:"user" }, audio:true });
-      streamRef.current = stream;
-      if (videoPreviewRef.current) videoPreviewRef.current.srcObject = stream;
-      const recorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = recorder;
-      const chunks = [];
-      recorder.ondataavailable = e => chunks.push(e.data);
-      recorder.onstop = () => {
-        const blob = new Blob(chunks, { type:"video/mp4" });
-        setVideoURL(URL.createObjectURL(blob));
-        stream.getTracks().forEach(t => t.stop());
-      };
-      recorder.start();
-      setRecording(true);
-    } catch(e) { setError("No se pudo acceder a la cámara."); }
-  };
-
-  const stopRecording = () => {
-    mediaRecorderRef.current?.stop();
-    setRecording(false);
+  // ─── VIDEO — selección desde galería ────────
+  const handleVideoSelect = (e) => {
+    const file = e.target.files[0];
+    if (file) setVideoURL(URL.createObjectURL(file));
   };
 
   // ════════════════════════════════════════════
@@ -330,8 +346,13 @@ export default function COCerca() {
         <div style={{ fontSize:18,fontWeight:700,color:"#7fffd4",marginBottom:24,letterSpacing:2 }}>
           {regStep===1?"QUIÉN SOS":regStep===2?"QUÉ BUSCÁS":"TU PRESENTACIÓN"}
         </div>
-        {error && <div style={{ background:"#2a0a0a",border:"1px solid #aa4444",borderRadius:10,padding:"10px 14px",fontSize:11,color:"#ff8888",marginBottom:14 }}>{error}</div>}
+        {error && (
+          <div style={{ background:"#2a0a0a",border:"1px solid #aa4444",borderRadius:10,padding:"10px 14px",fontSize:11,color:"#ff8888",marginBottom:14 }}>
+            {error}
+          </div>
+        )}
 
+        {/* PASO 1 */}
         {regStep===1 && (
           <div className="fu">
             <label style={S.label}>TU NOMBRE</label>
@@ -344,12 +365,13 @@ export default function COCerca() {
           </div>
         )}
 
+        {/* PASO 2 */}
         {regStep===2 && (
           <div className="fu">
             <label style={S.label}>MOSTRARME EN EL RADAR DE</label>
             <div style={{ display:"flex", flexDirection:"column", gap:10, marginBottom:24 }}>
               {BUSCA_OPTS.map(o=>(
-                <button key={o.value} onClick={()=>setRegBusca(o.value)} style={{ padding:"14px 16px", borderRadius:12, border:`1px solid ${regBusca===o.value?"#4ecda4":"#1a3a2a"}`, background:regBusca===o.value?"#0d2a1a":"#0a0f0d", color:regBusca===o.value?"#7fffd4":"#4ecda4", fontSize:13, cursor:"pointer", fontFamily:"'Courier New',monospace", letterSpacing:1, textAlign:"left", display:"flex", alignItems:"center", gap:10, width:"100%", boxSizing:"border-box" }}>
+                <button key={o.value} onClick={()=>setRegBusca(o.value)} style={{ padding:"14px 16px",borderRadius:12,border:`1px solid ${regBusca===o.value?"#4ecda4":"#1a3a2a"}`,background:regBusca===o.value?"#0d2a1a":"#0a0f0d",color:regBusca===o.value?"#7fffd4":"#4ecda4",fontSize:13,cursor:"pointer",fontFamily:"'Courier New',monospace",letterSpacing:1,textAlign:"left",display:"flex",alignItems:"center",gap:10,width:"100%",boxSizing:"border-box" }}>
                   <span style={{ fontSize:16 }}>{o.icon}</span>{o.label}
                   {regBusca===o.value&&<span style={{ marginLeft:"auto" }}>✓</span>}
                 </button>
@@ -362,49 +384,90 @@ export default function COCerca() {
           </div>
         )}
 
+        {/* PASO 3 */}
         {regStep===3 && (
           <div className="fu">
             <label style={S.label}>¿CÓMO TE PRESENTÁS?</label>
             <div style={{ display:"flex", gap:10, marginBottom:16 }}>
-              <button onClick={()=>setRegPresType("foto")} style={{ flex:1, padding:"16px 10px", borderRadius:12, border:`1px solid ${regPresType==="foto"?"#4ecda4":"#1a3a2a"}`, background:regPresType==="foto"?"#0d2a1a":"#0a0f0d", color:regPresType==="foto"?"#7fffd4":"#4ecda4", cursor:"pointer", fontFamily:"'Courier New',monospace", fontSize:12, letterSpacing:1, boxSizing:"border-box" }}>
+              <button onClick={()=>setRegPresType("foto")} style={{ flex:1,padding:"16px 10px",borderRadius:12,border:`1px solid ${regPresType==="foto"?"#4ecda4":"#1a3a2a"}`,background:regPresType==="foto"?"#0d2a1a":"#0a0f0d",color:regPresType==="foto"?"#7fffd4":"#4ecda4",cursor:"pointer",fontFamily:"'Courier New',monospace",fontSize:12,letterSpacing:1,boxSizing:"border-box" }}>
                 📸<br/>FOTO +<br/>MENSAJE
               </button>
-              <button onClick={()=>setRegPresType("video")} style={{ flex:1, padding:"16px 10px", borderRadius:12, border:`1px solid ${regPresType==="video"?"#4ecda4":"#1a3a2a"}`, background:regPresType==="video"?"#0d2a1a":"#0a0f0d", color:regPresType==="video"?"#7fffd4":"#4ecda4", cursor:"pointer", fontFamily:"'Courier New',monospace", fontSize:12, letterSpacing:1, boxSizing:"border-box" }}>
+              <button onClick={()=>setRegPresType("video")} style={{ flex:1,padding:"16px 10px",borderRadius:12,border:`1px solid ${regPresType==="video"?"#4ecda4":"#1a3a2a"}`,background:regPresType==="video"?"#0d2a1a":"#0a0f0d",color:regPresType==="video"?"#7fffd4":"#4ecda4",cursor:"pointer",fontFamily:"'Courier New',monospace",fontSize:12,letterSpacing:1,boxSizing:"border-box" }}>
                 📹<br/>VIDEO DE<br/>PRESENTACIÓN
               </button>
             </div>
 
+            {/* FOTO */}
             {regPresType==="foto" && (
               <div style={{ marginBottom:16 }}>
                 <label style={{ ...S.label, marginBottom:6 }}>TU FOTO</label>
-                <div style={{ border:"1px dashed #1a4a2a", borderRadius:12, padding:"20px", textAlign:"center", marginBottom:12, cursor:"pointer" }} onClick={openCamera}>
+                {/* input oculto — capture abre cámara directo en Android */}
+                <input
+                  id="photoInput"
+                  type="file"
+                  accept="image/*"
+                  capture
+                  style={{ display:"none" }}
+                  onChange={e=>{ const f=e.target.files[0]; if(f) setRegPhotoURL(URL.createObjectURL(f)); }}
+                />
+                <div
+                  style={{ border:"1px dashed #1a4a2a",borderRadius:12,padding:"20px",textAlign:"center",marginBottom:12,cursor:"pointer" }}
+                  onClick={openCamera}
+                >
                   {regPhotoURL
                     ? <img src={regPhotoURL} alt="" style={{ width:80,height:80,borderRadius:"50%",objectFit:"cover",border:"2px solid #4ecda4" }}/>
-                    : <div style={{ color:"#2a6a4a",fontSize:12,letterSpacing:1 }}>📸 SACAR FOTO<br/><span style={{ fontSize:10,opacity:0.6 }}>tocá para abrir cámara</span></div>
+                    : <div style={{ color:"#2a6a4a",fontSize:12,letterSpacing:1 }}>
+                        📸 SACAR FOTO<br/>
+                        <span style={{ fontSize:10,opacity:0.6 }}>tocá para abrir cámara</span>
+                      </div>
                   }
                 </div>
-                <input id="photoInput" type="file" accept="image/*" capture="user" style={{ display:"none" }}
-                  onChange={e=>{ const f=e.target.files[0]; if(f) setRegPhotoURL(URL.createObjectURL(f)); }}/>
+                {regPhotoURL && (
+                  <button style={{ ...S.btnOutline, marginBottom:12 }} onClick={()=>{ setRegPhotoURL(""); openCamera(); }}>
+                    🔄 CAMBIAR FOTO
+                  </button>
+                )}
                 <label style={S.label}>TU MENSAJE</label>
-                <textarea style={{ ...S.input, minHeight:70, resize:"none" }} placeholder="Ej: Hola! Te vi y me animé 😊" value={regMensaje} onChange={e=>setRegMensaje(e.target.value)} maxLength={120}/>
+                <textarea
+                  style={{ ...S.input, minHeight:70, resize:"none" }}
+                  placeholder="Ej: Hola! Te vi y me animé 😊"
+                  value={regMensaje}
+                  onChange={e=>setRegMensaje(e.target.value)}
+                  maxLength={120}
+                />
               </div>
             )}
 
+            {/* VIDEO — galería en lugar de MediaRecorder */}
             {regPresType==="video" && (
               <div style={{ marginBottom:16 }}>
                 <label style={{ ...S.label, marginBottom:6 }}>TU VIDEO</label>
+                {/* input oculto — capture abre cámara de video en Android */}
+                <input
+                  id="videoInput"
+                  type="file"
+                  accept="video/*"
+                  capture
+                  style={{ display:"none" }}
+                  onChange={handleVideoSelect}
+                />
                 {!videoURL ? (
-                  <div style={{ border:"1px dashed #1a4a2a", borderRadius:12, overflow:"hidden", marginBottom:12 }}>
-                    <video ref={videoPreviewRef} autoPlay muted playsInline style={{ width:"100%", display:"block", background:"#000", minHeight:180 }}/>
-                    {!recording
-                      ? <button style={{ ...S.btn, borderRadius:0, marginTop:0 }} onClick={startRecording}>🎥 INICIAR GRABACIÓN</button>
-                      : <button style={{ ...S.btn, borderRadius:0, marginTop:0, background:"#e05555" }} onClick={stopRecording}>⏹ DETENER</button>
-                    }
+                  <div
+                    style={{ border:"1px dashed #1a4a2a",borderRadius:12,padding:"32px 20px",textAlign:"center",cursor:"pointer",marginBottom:12 }}
+                    onClick={()=>document.getElementById("videoInput").click()}
+                  >
+                    <div style={{ fontSize:32,marginBottom:8 }}>📹</div>
+                    <div style={{ color:"#2a6a4a",fontSize:12,letterSpacing:1 }}>
+                      GRABAR O ELEGIR VIDEO<br/>
+                      <span style={{ fontSize:10,opacity:0.6 }}>tocá para abrir cámara</span>
+                    </div>
                   </div>
                 ) : (
                   <div style={{ marginBottom:12 }}>
-                    <video src={videoURL} controls playsInline style={{ width:"100%", borderRadius:12, border:"1px solid #1a4a2a" }}/>
-                    <button style={{ ...S.btnOutline, marginTop:8 }} onClick={()=>setVideoURL("")}>🔄 GRABAR DE NUEVO</button>
+                    <video src={videoURL} controls playsInline style={{ width:"100%",borderRadius:12,border:"1px solid #1a4a2a" }}/>
+                    <button style={{ ...S.btnOutline, marginTop:8 }} onClick={()=>{ setVideoURL(""); document.getElementById("videoInput").click(); }}>
+                      🔄 CAMBIAR VIDEO
+                    </button>
                   </div>
                 )}
               </div>
@@ -412,7 +475,11 @@ export default function COCerca() {
 
             <div style={{ display:"flex", gap:10, marginTop:8 }}>
               <button style={{ ...S.btnOutline, width:"auto", padding:"12px 20px", marginTop:0 }} onClick={()=>setRegStep(2)}>← ATRÁS</button>
-              <button style={{ ...S.btn, marginTop:0, opacity:(regPresType&&!loading)?1:0.4 }} disabled={!regPresType||loading} onClick={handleRegister}>
+              <button
+                style={{ ...S.btn, marginTop:0, opacity:(regPresType&&!loading)?1:0.4 }}
+                disabled={!regPresType||loading}
+                onClick={handleRegister}
+              >
                 {loading?"CONECTANDO...":"ENTRAR AL RADAR ✓"}
               </button>
             </div>
@@ -427,9 +494,9 @@ export default function COCerca() {
     <div style={{ ...S.page, justifyContent:"center", padding:"24px 20px", background:"#050810" }}>
       <div style={{ width:"100%", maxWidth:380, textAlign:"center" }}>
         <div style={{ fontSize:9,letterSpacing:4,color:"#4ecda4",marginBottom:20,opacity:0.6 }}>MOSTRÁ ESTA PANTALLA</div>
-        <div style={{ background:"#0d1a14", border:"1px solid #1a4a2a", borderRadius:20, padding:28, marginBottom:16, boxSizing:"border-box" }}>
+        <div style={{ background:"#0d1a14",border:"1px solid #1a4a2a",borderRadius:20,padding:28,marginBottom:16,boxSizing:"border-box" }}>
           {myProfile?.presType==="video"&&videoURL
-            ? <video src={videoURL} controls playsInline style={{ width:"100%", borderRadius:12, marginBottom:14 }}/>
+            ? <video src={videoURL} controls playsInline style={{ width:"100%",borderRadius:12,marginBottom:14 }}/>
             : <img src={myProfile?.photo_url||`https://i.pravatar.cc/150?u=${myProfile?.name}`} alt="" style={{ width:90,height:90,borderRadius:"50%",objectFit:"cover",border:"3px solid #4ecda4",marginBottom:14 }}/>
           }
           <div style={{ fontSize:20,fontWeight:700,marginBottom:4 }}>{myProfile?.name}</div>
@@ -464,12 +531,18 @@ export default function COCerca() {
         </div>
         <div style={{ flex:1,overflowY:"auto",padding:"14px",display:"flex",flexDirection:"column",gap:10 }}>
           <div style={{ textAlign:"center",margin:"6px 0" }}>
-            <span style={{ fontSize:9,color:"#2a6a4a",letterSpacing:2,background:"#0d1a14",padding:"4px 12px",borderRadius:20,border:"1px solid #1a3a2a" }}>💚 MATCH CON {activeChat.name?.toUpperCase()}</span>
+            <span style={{ fontSize:9,color:"#2a6a4a",letterSpacing:2,background:"#0d1a14",padding:"4px 12px",borderRadius:20,border:"1px solid #1a3a2a" }}>
+              💚 MATCH CON {activeChat.name?.toUpperCase()}
+            </span>
           </div>
-          {msgs.length===0&&<div style={{ textAlign:"center",color:"#2a5a3a",fontSize:11,marginTop:20 }}>Sé el primero en escribir 👋</div>}
+          {msgs.length===0&&(
+            <div style={{ textAlign:"center",color:"#2a5a3a",fontSize:11,marginTop:20 }}>Sé el primero en escribir 👋</div>
+          )}
           {msgs.map((msg,i)=>(
             <div key={i} style={{ display:"flex",justifyContent:msg.from==="me"?"flex-end":"flex-start" }}>
-              {msg.from==="them"&&<img src={activeChat.photo_url||`https://i.pravatar.cc/150?u=${activeChat.name}`} alt="" style={{ width:26,height:26,borderRadius:"50%",objectFit:"cover",marginRight:8,alignSelf:"flex-end",border:"1px solid #1a3a2a" }}/>}
+              {msg.from==="them"&&(
+                <img src={activeChat.photo_url||`https://i.pravatar.cc/150?u=${activeChat.name}`} alt="" style={{ width:26,height:26,borderRadius:"50%",objectFit:"cover",marginRight:8,alignSelf:"flex-end",border:"1px solid #1a3a2a" }}/>
+              )}
               <div style={{ maxWidth:"70%",background:msg.from==="me"?"#4ecda4":"#0d1a14",color:msg.from==="me"?"#080c10":"#e0f7f0",border:msg.from==="me"?"none":"1px solid #1a3a2a",borderRadius:msg.from==="me"?"16px 16px 4px 16px":"16px 16px 16px 4px",padding:"10px 14px",fontFamily:"sans-serif",fontSize:13 }}>
                 {msg.text}
                 <div style={{ fontSize:9,opacity:0.5,marginTop:4,textAlign:"right" }}>{msg.time}</div>
@@ -479,7 +552,13 @@ export default function COCerca() {
           <div ref={chatEndRef}/>
         </div>
         <div style={{ padding:"10px 14px",background:"#0d1a14",borderTop:"1px solid #1a3a2a",display:"flex",gap:10,alignItems:"center" }}>
-          <input value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&sendMessage()} placeholder="Escribí algo..." style={{ flex:1,background:"#080c10",border:"1px solid #1a3a2a",borderRadius:24,padding:"10px 16px",color:"#e0f7f0",fontSize:13,fontFamily:"sans-serif",outline:"none" }}/>
+          <input
+            value={chatInput}
+            onChange={e=>setChatInput(e.target.value)}
+            onKeyDown={e=>e.key==="Enter"&&sendMessage()}
+            placeholder="Escribí algo..."
+            style={{ flex:1,background:"#080c10",border:"1px solid #1a3a2a",borderRadius:24,padding:"10px 16px",color:"#e0f7f0",fontSize:13,fontFamily:"sans-serif",outline:"none" }}
+          />
           <button onClick={sendMessage} style={{ width:40,height:40,borderRadius:"50%",background:"#4ecda4",border:"none",cursor:"pointer",fontSize:15 }}>➤</button>
         </div>
       </div>
@@ -513,8 +592,12 @@ export default function COCerca() {
           <button onClick={()=>setShowPresMode(true)} style={{ background:"#0d2a1a",border:"1px solid #4ecda4",borderRadius:20,padding:"5px 12px",color:"#4ecda4",cursor:"pointer",fontSize:9,letterSpacing:1 }}>
             {myProfile?.presType==="video"?"📹":"📸"} MOSTRAR
           </button>
-          {!isPremium&&<button onClick={()=>setShowPaywall(true)} className="gold-btn" style={{ borderRadius:20,padding:"5px 12px",fontSize:9,letterSpacing:1 }}>⭐ PREMIUM</button>}
-          {isPremium&&<span style={{ fontSize:9,color:"#ffd700",letterSpacing:2,border:"1px solid #ffd700",borderRadius:20,padding:"4px 10px" }}>⭐ PRO</span>}
+          {!isPremium&&(
+            <button onClick={()=>setShowPaywall(true)} className="gold-btn" style={{ borderRadius:20,padding:"5px 12px",fontSize:9,letterSpacing:1 }}>⭐ PREMIUM</button>
+          )}
+          {isPremium&&(
+            <span style={{ fontSize:9,color:"#ffd700",letterSpacing:2,border:"1px solid #ffd700",borderRadius:20,padding:"4px 10px" }}>⭐ PRO</span>
+          )}
           {matches.length>0&&(
             <button onClick={()=>setShowMatches(true)} style={{ background:"none",border:"none",cursor:"pointer",position:"relative",padding:0 }}>
               <span style={{ fontSize:20 }}>💚</span>
@@ -525,7 +608,9 @@ export default function COCerca() {
         </div>
       </div>
 
-      {gpsError&&<div style={{ fontSize:9,color:"#ff8888",padding:"4px 18px",letterSpacing:1 }}>⚠ {gpsError} — activá el GPS del celu</div>}
+      {gpsError&&(
+        <div style={{ fontSize:9,color:"#ff8888",padding:"4px 18px",letterSpacing:1 }}>⚠ {gpsError} — activá el GPS del celu</div>
+      )}
 
       {/* Toggle visible */}
       <div style={{ display:"flex",alignItems:"center",gap:10,marginBottom:6,padding:"0 18px",width:"100%",boxSizing:"border-box" }}>
@@ -574,7 +659,7 @@ export default function COCerca() {
         </div>
         <div className="dot-ping" style={{ position:"absolute",left:RADAR_SIZE/2-10,top:RADAR_SIZE/2-10,width:20,height:20,borderRadius:"50%",border:"2px solid #4ecda4",zIndex:9 }}/>
 
-        {/* Usuarios reales con ángulo calculado desde GPS */}
+        {/* Usuarios */}
         {users.map(user => {
           const angle = (myLat&&myLng&&user.lat&&user.lng)
             ? calcAngle(myLat, myLng, user.lat, user.lng)
@@ -694,7 +779,9 @@ export default function COCerca() {
         <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.88)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,padding:24,boxSizing:"border-box" }} onClick={()=>setShowMatches(false)}>
           <div onClick={e=>e.stopPropagation()} style={{ background:"#0d1a14",border:"1px solid #4ecda4",borderRadius:20,padding:22,width:"100%",maxWidth:360,boxSizing:"border-box" }}>
             <div style={{ fontSize:10,letterSpacing:4,color:"#4ecda4",marginBottom:14 }}>TUS MATCHES</div>
-            {matches.length===0&&<div style={{ fontSize:11,color:"#2a5a3a",textAlign:"center",padding:"20px 0" }}>Todavía no tenés matches 💚</div>}
+            {matches.length===0&&(
+              <div style={{ fontSize:11,color:"#2a5a3a",textAlign:"center",padding:"20px 0" }}>Todavía no tenés matches 💚</div>
+            )}
             {matches.map((m,i)=>{
               const other = m.otherUser;
               if (!other) return null;
